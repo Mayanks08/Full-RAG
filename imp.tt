@@ -1,0 +1,75 @@
+# pipeline.py
+from bson import ObjectId
+
+# ------------ STATUS HELPER -----------------
+async def update_status(files_collection, file_id, new_status):
+    """
+    Updates the status field of a document and returns the updated status.
+    """
+    await files_collection.update_one(
+        {"_id": ObjectId(file_id)},
+        {"$set": {"status": new_status}}
+    )
+    doc = await files_collection.find_one({"_id": ObjectId(file_id)}, {"status": 1})
+    return doc["status"]
+
+
+# ------------ PIPELINE RUNNER -----------------
+async def run_pipeline(files_collection, file_id, steps):
+    """
+    Runs steps sequentially, updating status automatically.
+    steps = [
+        ("Uploading started...", upload_file_func),
+        ("File uploaded, converting to images...", convert_images_func),
+        ("Converting to images successful", finalize_func),
+        ("Processing completed ✅", None),
+    ]
+    """
+    for status_text, step_func in steps:
+        try:
+            # Update status BEFORE step
+            current_status = await update_status(files_collection, file_id, status_text)
+            print(f"✅ Status updated: {current_status}")
+
+            # Run the actual step function if provided
+            if step_func:
+                await step_func(file_id)
+
+        except Exception as e:
+            # Handle failure
+            error_message = f"❌ Failed at step: {status_text}. Reason: {str(e)}"
+            await update_status(files_collection, file_id, error_message)
+            print(error_message)
+            break
+
+
+# steps.py
+async def upload_file_func(file_id):
+    print(f"[{file_id}] Uploading...")
+    # simulate error
+    # raise Exception("Network error during upload!")
+    print(f"[{file_id}] Upload complete.")
+
+async def convert_images_func(file_id):
+    print(f"[{file_id}] Converting to images...")
+    print(f"[{file_id}] Conversion complete.")
+
+async def finalize_func(file_id):
+    print(f"[{file_id}] Finalizing process...")
+    print(f"[{file_id}] Done ✅")
+
+
+# main.py (FastAPI or your service file)
+from pipeline import run_pipeline
+from steps import upload_file_func, convert_images_func, finalize_func
+
+@app.post("/process/{file_id}")
+async def process_file(file_id: str):
+    steps = [
+        ("Uploading started...", upload_file_func),
+        ("File uploaded, converting to images...", convert_images_func),
+        ("Converting to images successful", finalize_func),
+        ("Processing completed ✅", None),
+    ]
+    await run_pipeline(files_collection, file_id, steps)
+    return {"message": "Pipeline started. Track status via /status/{file_id}"}
